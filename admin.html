@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel Admin - Estética Belleza</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+</head>
+<body>
+<header>
+<h1>Panel Admin - Estética Belleza</h1>
+<p>Visualiza todas las citas en tiempo real</p>
+</header>
+<main>
+<table>
+<thead>
+<tr>
+<th>Nombre</th>
+<th>Teléfono</th>
+<th>Servicio</th>
+<th>Fecha</th>
+<th>Hora</th>
+<th>Comentarios</th>
+</tr>
+</thead>
+<tbody id="citasTableBody"></tbody>
+</table>
+</main>
+<script>
+const firebaseConfig = {
+ apiKey: "AIzaSyC4FVokHFRbbTc4rBifNyt5bvOX2CuzkWw",
+  authDomain: "calificaciones-9f753.firebaseapp.com",
+  databaseURL: "https://calificaciones-9f753-default-rtdb.firebaseio.com",
+  projectId: "calificaciones-9f753",
+  storageBucket: "calificaciones-9f753.firebasestorage.app",
+  messagingSenderId: "907008005737",
+  appId: "1:907008005737:web:3069998b0bad883cc574f8"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const tbody = document.getElementById('citasTableBody');
+
+if("Notification" in window && Notification.permission !== "granted"){
+  Notification.requestPermission();
+}
+let notifiedIds = new Set();
+
+db.collection("citas").orderBy("fechaHora").onSnapshot((snapshot) => {
+  tbody.innerHTML = '';
+  snapshot.forEach((doc) => {
+    const data = doc.data();
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td data-label="Nombre">${data.nombre||''}</td>
+                    <td data-label="Teléfono">${data.telefono||''}</td>
+                    <td data-label="Servicio">${data.servicio||''}</td>
+                    <td data-label="Fecha">${data.fecha||''}</td>
+                    <td data-label="Hora">${data.hora||''}</td>
+                    <td data-label="Comentarios">${data.comentarios||''}</td>`;
+    tbody.appendChild(tr);
+
+    if(!notifiedIds.has(doc.id)){
+      notifiedIds.add(doc.id);
+      if(Notification.permission === "granted"){
+        new Notification("Nueva cita agendada", {
+          body: `${data.nombre} - ${data.servicio} el ${data.fecha} a las ${data.hora}`,
+          icon: ""
+        });
+      }
+    }
+  });
+});
+</script>
+</body>
+</html>
