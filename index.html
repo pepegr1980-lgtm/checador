@@ -514,7 +514,7 @@ async function checar(){
   if (estado === "entrada") {
     if (!estaDentroDePlanta(ubicacion.latitude, ubicacion.longitude)) {
       const dist = Math.round(distanciaMetros(ubicacion.latitude, ubicacion.longitude, PLANTA.lat, PLANTA.lng));
-      msg.innerHTML=`❌ Estás fuera de la planta<br>Distancia: ${dist}m. Máximo: ${PLANTA.radio}m`;
+      msg.innerHTML=`❌ Estás fuera de la planta<br>Distancia: ${dist}m.`;
       actualizarUbicacionInfo();
       return;
     }
