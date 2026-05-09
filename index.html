@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Checador - Joe Rodriguez</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f172a">
+<link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiQ2hlY2Fkb3IgSm9lIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJ0aGVtZV9jb2xvciI6IiMwZjE3MmEiLCJiYWNrZ3JvdW5kX2NvbG9yIjoiIzBmMTcyYSIsImljb25zIjpbeyJzcmMiOiJkYXRhOmltYWdlL3N2Zyt4bWw8c3ZnIHhtbG5zPSdodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2Zycgdmlld0JveD0nMCAwIDUxMiA1MTInPjxyZWN0IGZpbGw9JyMyMmM1NWUnIHdpZHRoPSc1MTInIGhlaWdodD0nNTEyJyByeD0nNzAnLz48dGV4dCB4PSc1MCUnIHk9JzUwJScgZG9taW5hbnQtYmFzZWxpbmU9J2NlbnRyYWwnIHRleHQtYW5jaG9yPSdtaWRkbGUnIGZvbnQtc2l6ZT0nMjgwJyBmaWxsPScjZmZmJz7wn5GpPC90ZXh0Pjwvc3ZnPiwic2l6ZXMiOiI1MTJ4NTEyIiwidHlwZSI6ImltYWdlL3N2Zyt4bWwifV19">
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+<style>
+body{
+font-family:Arial;
+background:#0f172a;
+color:white;
+text-align:center;
+margin:0;
+}
+.status-bar{
+background:#334155;
+padding:8px;
+font-size:14px;
+}
+.status-bar.online{ background:#166534; }
+.status-bar.offline{ background:#991b1b; }
+.card{
+background:#1e293b;
+padding:20px;
+margin:20px;
+border-radius:15px;
+}
+input{
+padding:15px;
+width:90%;
+border:none;
+border-radius:10px;
+margin:10px;
+font-size:18px;
+}
+button{
+padding:15px;
+width:90%;
+font-size:18px;
+border:none;
+border-radius:10px;
+background:#22c55e;
+color:white;
+margin:10px;
+}
+button:disabled{
+background:#64748b;
+}
+.badge{
+background:#f59e0b;
+color:#0f172a;
+padding:4px 8px;
+border-radius:8px;
+font-size:12px;
+font-weight:bold;
+display:inline-block;
+margin:5px 0;
+}
+.distancia{
+font-size:13px;
+color:#94a3b8;
+margin-top:5px;
+}
+</style>
+</head>
+
+<body>
+<div id="statusBar" class="status-bar">🔄 Verificando conexión...</div>
+
+<h2>📱 Checador - Joe Rodriguez</h2>
+
+<div class="card" id="loginBox">
+<h3>Ingresar</h3>
+<input type="password" id="pin" placeholder="PIN">
+<button onclick="login()">Entrar</button>
+<h3 id="msgLogin"></h3>
+</div>
+
+<div class="card" id="panel" style="display:none;">
+<h3 id="nombre"></h3>
+<div id="pendientes"></div>
+<div id="ubicacionInfo" class="distancia"></div>
+<button id="btn" onclick="checar()">Cargando...</button>
+<button onclick="logout()">Salir</button>
+<h3 id="msg"></h3>
+</div>
+
+<script>
+// ====== SERVICE WORKER INLINE ======
+if ('serviceWorker' in navigator) {
+  const swCode = `
+    const CACHE_NAME = 'checador-v2';
+    self.addEventListener('install', e => self.skipWaiting());
+    self.addEventListener('activate', e => e.waitUntil(clients.claim()));
+    self.addEventListener('fetch', e => {
+      if (e.request.url.includes('firebase') || e.request.method!== 'GET') return;
+      e.respondWith(
+        caches.match(e.request).then(r => r || fetch(e.request).then(resp => {
+          const copy = resp.clone();
+          caches.open(CACHE_NAME).then(c => c.put(e.request, copy));
+          return resp;
+        }))
+      );
+    });
+  `;
+  const blob = new Blob([swCode], {type: 'application/javascript'});
+  navigator.serviceWorker.register(URL.createObjectURL(blob));
+}
+
+const firebaseConfig={
+ apiKey: "AIzaSyC4FVokHFRbbTc4rBifNyt5bvOX2CuzkWw",
+ authDomain: "calificaciones-9f753.firebaseapp.com",
+ databaseURL: "https://calificaciones-9f753-default-rtdb.firebaseio.com",
+ projectId: "calificaciones-9f753",
+ storageBucket: "calificaciones-9f753.firebasestorage.app",
+ messagingSenderId: "907008005737",
+ appId: "1:907008005737:web:3069998b0bad883cc574f8"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db=firebase.firestore();
+
+let empleado=null;
+let estado="entrada";
+let horaEntradaLocal=null;
+let intervalo=null;
+let dbLocal=null;
+let sincronizando = false;
+
+// ====== CONFIGURA TU PLANTA AQUÍ ======
+const PLANTA = {
+  lat: 27.6784068, // CAMBIA por la latitud de tu planta
+  lng: -105.1625431, // CAMBIA por la longitud de tu planta
+  radio: 10 // metros permitidos desde el centro
+};
+
+// ====== INDEXEDDB PARA OFFLINE ======
+function initDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("ChecadorDB", 2);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      dbLocal = request.result;
+      resolve(dbLocal);
+    };
+    request.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains("pendientes")) {
+        db.createObjectStore("pendientes", { keyPath: "id", autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains("empleados")) {
+        db.createObjectStore("empleados", { keyPath: "pin" });
+      }
+    };
+  });
+}
+
+function guardarOffline(registro) {
+  return new Promise((resolve, reject) => {
+    const tx = dbLocal.transaction("pendientes", "readwrite");
+    const store = tx.objectStore("pendientes");
+    store.add(registro);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function obtenerPendientes() {
+  return new Promise((resolve, reject) => {
+    const tx = dbLocal.transaction("pendientes", "readonly");
+    const store = tx.objectStore("pendientes");
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function borrarPendiente(id) {
+  return new Promise((resolve, reject) => {
+    const tx = dbLocal.transaction("pendientes", "readwrite");
+    const store = tx.objectStore("pendientes");
+    store.delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ====== CACHE DE EMPLEADOS PARA LOGIN OFFLINE ======
+async function cachearEmpleados() {
+  try {
+    const snap = await db.collection("empleados").get();
+    const tx = dbLocal.transaction("empleados", "readwrite");
+    const store = tx.objectStore("empleados");
+    snap.forEach(doc => {
+      const data = doc.data();
+      store.put({ pin: String(data.pin), nombre: data.nombre });
+    });
+  } catch(e) {
+    console.log("No se pudo cachear empleados:", e);
+  }
+}
+
+function buscarEmpleadoOffline(pin) {
+  return new Promise((resolve, reject) => {
+    const tx = dbLocal.transaction("empleados", "readonly");
+    const store = tx.objectStore("empleados");
+    const req = store.get(String(pin));
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// ====== SYNC AUTOMÁTICO CON BACKOFF Y BLOQUEO ======
+async function sincronizarPendientes() {
+  if (!navigator.onLine || sincronizando) return;
+  sincronizando = true;
+  btn.disabled = true;
+
+  try {
+    const pendientes = await obtenerPendientes();
+    if (pendientes.length === 0) {
+      actualizarContadorPendientes(0);
+      return;
+    }
+
+    msg.innerHTML = "🔄 Sincronizando " + pendientes.length + " registros...";
+
+    for (const reg of pendientes) {
+      let reintentos = 0;
+      while (reintentos < 3) {
+        try {
+          if (reg.tipo === "entrada") {
+            await db.collection("asistencia").add({
+              nombre: reg.nombre,
+              entrada: new Date(reg.timestamp),
+              salida: null,
+              lat: reg.lat,
+              lng: reg.lng
+            });
+          } else if (reg.tipo === "salida") {
+            const snap = await db.collection("asistencia")
+         .where("nombre", "==", reg.nombre)
+         .where("salida", "==", null)
+         .get();
+            for (const doc of snap.docs) {
+              await db.collection("asistencia").doc(doc.id).update({
+                salida: new Date(reg.timestamp)
+              });
+            }
+          }
+          await borrarPendiente(reg.id);
+          break;
+        } catch (e) {
+          reintentos++;
+          console.error(`Error sincronizando, intento ${reintentos}:`, e);
+          if (reintentos >= 3) {
+            msg.innerHTML = "⚠️ Error al sincronizar. Se reintentará después";
+            return;
+          }
+          await new Promise(r => setTimeout(r, 1000 * reintentos));
+        }
+      }
+    }
+
+    localStorage.removeItem("estadoOffline");
+    actualizarContadorPendientes(0);
+    msg.innerHTML = "✅ Sincronizado";
+    verificarEstado();
+  } finally {
+    sincronizando = false;
+    btn.disabled = false;
+  }
+}
+
+function actualizarContadorPendientes(cantidad) {
+  const div = document.getElementById("pendientes");
+  if (cantidad > 0) {
+    div.innerHTML = `<span class="badge">⏳ ${cantidad} pendientes por subir</span>`;
+  } else {
+    div.innerHTML = "";
+  }
+}
+
+// ====== DETECTAR CONEXIÓN ======
+function actualizarStatusConexion() {
+  const bar = document.getElementById("statusBar");
+  if (navigator.onLine) {
+    bar.innerHTML = "🟢 En línea";
+    bar.className = "status-bar online";
+    sincronizarPendientes();
+    cachearEmpleados();
+  } else {
+    bar.innerHTML = "🔴 Sin conexión - Guardando local";
+    bar.className = "status-bar offline";
+  }
+}
+
+window.addEventListener("online", actualizarStatusConexion);
+window.addEventListener("offline", actualizarStatusConexion);
+document.addEventListener('visibilitychange', () => {
+  if(!document.hidden && navigator.onLine) sincronizarPendientes();
+});
+
+// ====== LÓGICA PRINCIPAL ======
+window.onload = async function(){
+  await initDB();
+  actualizarStatusConexion();
+
+  const pendientes = await obtenerPendientes();
+  actualizarContadorPendientes(pendientes.length);
+
+  const usuarioGuardado = localStorage.getItem("empleado");
+  if(usuarioGuardado){
+    empleado = usuarioGuardado;
+    loginBox.style.display="none";
+    panel.style.display="block";
+    nombre.innerHTML="👤 "+empleado;
+
+    const entradaGuardada = localStorage.getItem("horaEntrada");
+    if(entradaGuardada){
+      horaEntradaLocal = new Date(parseInt(entradaGuardada));
+      iniciarContador();
+    }
+    verificarEstado();
+    actualizarUbicacionInfo();
+  }
+}
+
+async function login(){
+  const pinInput=document.getElementById("pin").value.trim();
+  if(!pinInput){
+    msgLogin.innerHTML="⚠️ Ingresa PIN";
+    return;
+  }
+
+  const empleadoCache = await buscarEmpleadoOffline(pinInput);
+  if (empleadoCache) {
+    empleado = empleadoCache.nombre;
+    localStorage.setItem("empleado", empleado);
+    loginBox.style.display="none";
+    panel.style.display="block";
+    nombre.innerHTML="👤 "+empleado;
+    msg.innerHTML = navigator.onLine? "" : "🔴 Login offline exitoso";
+    verificarEstado();
+    actualizarUbicacionInfo();
+    return;
+  }
+
+  if (!navigator.onLine) {
+    msgLogin.innerHTML="🔴 Sin conexión y PIN no encontrado en cache. Conéctate a internet 1 vez";
+    return;
+  }
+
+  try {
+    const snap = await db.collection("empleados").get();
+    let encontrado=false;
+    snap.forEach(doc=>{
+      const data=doc.data();
+      if(String(data.pin) === String(pinInput)){
+        empleado=data.nombre;
+        encontrado=true;
+      }
+    });
+
+    if(!encontrado){
+      msgLogin.innerHTML="❌ PIN incorrecto";
+      return;
+    }
+
+    await cachearEmpleados();
+    localStorage.setItem("empleado", empleado);
+    loginBox.style.display="none";
+    panel.style.display="block";
+    nombre.innerHTML="👤 "+empleado;
+    verificarEstado();
+    actualizarUbicacionInfo();
+  } catch(e) {
+    msgLogin.innerHTML="❌ Error al conectar";
+  }
+}
+
+// ====== GPS Y GEOFENCING ======
+function obtenerUbicacion(){
+  return new Promise((resolve)=>{
+    navigator.geolocation.getCurrentPosition(
+      pos=>resolve(pos.coords),
+      err=>{
+        console.log("GPS error:", err.message);
+        resolve({latitude:0, longitude:0});
+      },
+      {enableHighAccuracy:true, timeout:5000, maximumAge:60000}
+    );
+  });
+}
+
+function distanciaMetros(lat1, lng1, lat2, lng2) {
+  const R = 6371e3;
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lng2-lng1) * Math.PI/180;
+
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+          Math.cos(φ1) * Math.cos(φ2) *
+          Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+  return R * c;
+}
+
+function estaDentroDePlanta(lat, lng) {
+  if (lat === 0 && lng === 0) return false;
+  const dist = distanciaMetros(lat, lng, PLANTA.lat, PLANTA.lng);
+  return dist <= PLANTA.radio;
+}
+
+async function actualizarUbicacionInfo() {
+  const div = document.getElementById("ubicacionInfo");
+  if (!div) return;
+
+  try {
+    const pos = await obtenerUbicacion();
+    if (pos.latitude === 0 && pos.longitude === 0) {
+      div.innerHTML = "📍 GPS no disponible";
+      return;
+    }
+    const dist = Math.round(distanciaMetros(pos.latitude, pos.longitude, PLANTA.lat, PLANTA.lng));
+    const dentro = dist <= PLANTA.radio;
+    div.innerHTML = dentro
+     ? `📍 Dentro de planta - ${dist}m del centro`
+      : `📍 Fuera de planta - ${dist}m del centro`;
+  } catch(e) {
+    div.innerHTML = "";
+  }
+}
+
+function iniciarContador(){
+  clearInterval(intervalo);
+  intervalo = setInterval(()=>{
+    if(!horaEntradaLocal) return;
+    const ahora = new Date();
+    const diff = (ahora - horaEntradaLocal) / 1000;
+    if(diff < 60){
+      const restante = Math.ceil(60 - diff);
+      msg.innerHTML = "⏳ Espera " + restante + " segundos para salida";
+      btn.disabled = true;
+    }else{
+      msg.innerHTML = "✅ Ya puedes registrar salida";
+      btn.disabled = false;
+      clearInterval(intervalo);
+    }
+  },1000);
+}
+
+async function verificarEstado(){
+  const estadoLocal = localStorage.getItem("estadoOffline");
+  if (!navigator.onLine || estadoLocal) {
+    estado = estadoLocal || (horaEntradaLocal? "salida" : "entrada");
+    btn.innerHTML = estado === "entrada"? "Registrar Entrada" : "Registrar Salida";
+    btn.disabled = false;
+    if(estado === "salida" && horaEntradaLocal) iniciarContador();
+    return;
+  }
+
+  try {
+    const snap = await db.collection("asistencia")
+ .where("nombre","==",empleado)
+ .where("salida","==",null)
+ .get();
+
+    if(snap.empty){
+      estado="entrada";
+      btn.innerHTML="Registrar Entrada";
+      btn.disabled=false;
+    }else{
+      estado="salida";
+      btn.innerHTML="Registrar Salida";
+      const doc = snap.docs[0].data();
+      horaEntradaLocal = doc.entrada.toDate();
+      localStorage.setItem("horaEntrada", horaEntradaLocal.getTime());
+      iniciarContador();
+    }
+  } catch(e) {
+    console.error(e);
+    estado = horaEntradaLocal? "salida" : "entrada";
+    btn.innerHTML = estado === "entrada"? "Registrar Entrada" : "Registrar Salida";
+  }
+}
+
+async function checar(){
+  if (sincronizando) {
+    msg.innerHTML = "⏳ Espera, sincronizando...";
+    return;
+  }
+
+  msg.innerHTML="Obteniendo ubicación...";
+  const ahora = new Date();
+  const fechaHora = ahora.toLocaleString();
+
+  const ubicacion = await obtenerUbicacion();
+
+  if (ubicacion.latitude === 0 && ubicacion.longitude === 0) {
+    msg.innerHTML="❌ Activa el GPS para checar";
+    return;
+  }
+
+  // VALIDACIÓN GEOFENCE SOLO PARA ENTRADA
+  if (estado === "entrada") {
+    if (!estaDentroDePlanta(ubicacion.latitude, ubicacion.longitude)) {
+      const dist = Math.round(distanciaMetros(ubicacion.latitude, ubicacion.longitude, PLANTA.lat, PLANTA.lng));
+      msg.innerHTML=`❌ Estás fuera de la planta<br>Distancia: ${dist}m. Máximo: ${PLANTA.radio}m`;
+      actualizarUbicacionInfo();
+      return;
+    }
+  }
+
+  msg.innerHTML="Procesando...";
+  const registro = {
+    tipo: estado,
+    nombre: empleado,
+    timestamp: ahora.getTime(),
+    lat: ubicacion.latitude,
+    lng: ubicacion.longitude
+  };
+
+  if (!navigator.onLine) {
+    await guardarOffline(registro);
+    const pendientes = await obtenerPendientes();
+    actualizarContadorPendientes(pendientes.length);
+
+    if(estado==="entrada"){
+      horaEntradaLocal = ahora;
+      localStorage.setItem("horaEntrada", ahora.getTime());
+      localStorage.setItem("estadoOffline", "salida");
+      iniciarContador();
+      msg.innerHTML="💾 Entrada guardada offline<br><b>"+fechaHora+"</b>";
+      estado = "salida";
+      btn.innerHTML="Registrar Salida";
+    } else {
+      const diff = (ahora - horaEntradaLocal) / 1000;
+      if(diff < 60){
+        msg.innerHTML="⏳ Aún no puedes salir";
+        return;
+      }
+      localStorage.removeItem("horaEntrada");
+      localStorage.removeItem("estadoOffline");
+      horaEntradaLocal = null;
+      clearInterval(intervalo);
+      msg.innerHTML="💾 Salida guardada offline<br><b>"+fechaHora+"</b>";
+      estado = "entrada";
+      btn.innerHTML="Registrar Entrada";
+    }
+    actualizarUbicacionInfo();
+    return;
+  }
+
+  try{
+    if(estado==="entrada"){
+      await db.collection("asistencia").add({
+        nombre:empleado,
+        entrada:ahora,
+        salida:null,
+        lat:ubicacion.latitude,
+        lng:ubicacion.longitude
+      });
+      horaEntradaLocal = ahora;
+      localStorage.setItem("horaEntrada", ahora.getTime());
+      localStorage.setItem("estadoOffline", "salida");
+      iniciarContador();
+      msg.innerHTML="✅ Entrada registrada<br><b>"+fechaHora+"</b>";
+    }else{
+      const diff = (ahora - horaEntradaLocal) / 1000;
+      if(diff < 60){
+        msg.innerHTML="⏳ Aún no puedes salir";
+        return;
+      }
+      const snap=await db.collection("asistencia")
+   .where("nombre","==",empleado)
+   .where("salida","==",null)
+   .get();
+      for(const doc of snap.docs){
+        await db.collection("asistencia").doc(doc.id).update({
+          salida:ahora
+        });
+      }
+      localStorage.removeItem("horaEntrada");
+      localStorage.removeItem("estadoOffline");
+      horaEntradaLocal = null;
+      clearInterval(intervalo);
+      msg.innerHTML="🚪 Salida registrada<br><b>"+fechaHora+"</b>";
+    }
+    verificarEstado();
+    actualizarUbicacionInfo();
+  }catch(e){
+    console.error(e);
+    await guardarOffline(registro);
+    localStorage.setItem("estadoOffline", estado === "entrada"? "salida" : "entrada");
+    msg.innerHTML="💾 Error de red. Guardado offline";
+  }
+}
+
+async function logout(){
+  const pendientes = await obtenerPendientes();
+  if (pendientes.length > 0) {
+    if (!confirm(`Tienes ${pendientes.length} registros sin sincronizar. Si sales se pueden perder. ¿Salir de todos modos?`)) {
+      return;
+    }
+  }
+  localStorage.removeItem("empleado");
+  localStorage.removeItem("horaEntrada");
+  localStorage.removeItem("estadoOffline");
+  clearInterval(intervalo);
+  location.reload();
+}
+</script>
+</body>
+</html>
